@@ -7,23 +7,28 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/telegram"
 	"github.com/ogen-go/ogen/ogenerrors"
+	"go.etcd.io/bbolt"
 
 	ht "github.com/ogen-go/ogen/http"
 	"github.com/tgdrive/teldrive/internal/api"
 	"github.com/tgdrive/teldrive/internal/cache"
 	"github.com/tgdrive/teldrive/internal/config"
-	"github.com/tgdrive/teldrive/internal/kv"
 	"github.com/tgdrive/teldrive/internal/tgc"
+	"github.com/tgdrive/teldrive/internal/version"
 	"gorm.io/gorm"
 )
 
 type apiService struct {
 	db          *gorm.DB
-	cnf         *config.Config
+	cnf         *config.ServerCmdConfig
 	cache       cache.Cacher
-	kv          kv.KV
+	boltdb      *bbolt.DB
 	worker      *tgc.BotWorker
 	middlewares []telegram.Middleware
+}
+
+func (a *apiService) VersionVersion(ctx context.Context) (*api.ApiVersion, error) {
+	return version.GetVersionInfo(), nil
 }
 
 func (a *apiService) NewError(ctx context.Context, err error) *api.ErrorStatusCode {
@@ -48,11 +53,11 @@ func (a *apiService) NewError(ctx context.Context, err error) *api.ErrorStatusCo
 }
 
 func NewApiService(db *gorm.DB,
-	cnf *config.Config,
+	cnf *config.ServerCmdConfig,
 	cache cache.Cacher,
-	kv kv.KV,
+	boltdb *bbolt.DB,
 	worker *tgc.BotWorker) *apiService {
-	return &apiService{db: db, cnf: cnf, cache: cache, kv: kv, worker: worker,
+	return &apiService{db: db, cnf: cnf, cache: cache, boltdb: boltdb, worker: worker,
 		middlewares: tgc.NewMiddleware(&cnf.TG, tgc.WithFloodWait(), tgc.WithRateLimit())}
 }
 

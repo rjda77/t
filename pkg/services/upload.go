@@ -48,20 +48,24 @@ func (a *apiService) UploadsPartsById(ctx context.Context, params api.UploadsPar
 }
 
 func (a *apiService) UploadsStats(ctx context.Context, params api.UploadsStatsParams) ([]api.UploadStats, error) {
-	userId, _ := auth.GetUser(ctx)
+	userId := auth.GetUser(ctx)
 	var stats []api.UploadStats
 	err := a.db.Raw(`
     SELECT 
-        dates.upload_date::date AS upload_date,
-        COALESCE(SUM(files.size), 0)::bigint AS total_uploaded
+    dates.upload_date::date AS upload_date,
+    COALESCE(SUM(files.size), 0)::bigint AS total_uploaded
     FROM 
-        generate_series(CURRENT_DATE - INTERVAL '1 day' * @days, CURRENT_DATE, '1 day') AS dates(upload_date)
+        generate_series(
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - INTERVAL '1 day' * @days,
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date,
+            '1 day'
+        ) AS dates(upload_date)
     LEFT JOIN 
-        teldrive.files AS files
+    teldrive.files AS files
     ON 
-        dates.upload_date = DATE_TRUNC('day', files.created_at)
-    WHERE 
-	    dates.upload_date >= CURRENT_DATE - INTERVAL '1 day' * @days and (files.type='file' or files.type is null) and (files.user_id=@userId or files.user_id is null)
+        dates.upload_date = DATE_TRUNC('day', files.created_at)::date
+        AND files.type = 'file'
+        AND files.user_id = @userId
     GROUP BY 
         dates.upload_date
     ORDER BY 
@@ -90,7 +94,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 		return nil, &apiError{err: errors.New("encryption is not enabled"), code: 400}
 	}
 
-	userId, session := auth.GetUser(ctx)
+	userId := auth.GetUser(ctx)
 
 	fileStream := req.Content.Data
 
@@ -112,7 +116,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 	}
 
 	if len(tokens) == 0 {
-		client, err = tgc.AuthClient(ctx, &a.cnf.TG, session)
+		client, err = tgc.AuthClient(ctx, &a.cnf.TG, auth.GetJWTUser(ctx).TgSession)
 		if err != nil {
 			return nil, err
 		}
@@ -120,7 +124,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 	} else {
 		a.worker.Set(tokens, channelId)
 		token, index = a.worker.Next(channelId)
-		client, err = tgc.BotClient(ctx, a.kv, &a.cnf.TG, token)
+		client, err = tgc.BotClient(ctx, a.boltdb, &a.cnf.TG, token)
 
 		if err != nil {
 			return nil, err
@@ -216,7 +220,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 			Name:      params.PartName,
 			UploadId:  params.ID,
 			PartId:    message.ID,
-			ChannelID: channelId,
+			ChannelId: channelId,
 			Size:      fileSize,
 			PartNo:    int(params.PartNo),
 			UserId:    userId,
@@ -240,7 +244,7 @@ func (a *apiService) UploadsUpload(ctx context.Context, req *api.UploadsUploadRe
 		out = api.UploadPart{
 			Name:      partUpload.Name,
 			PartId:    partUpload.PartId,
-			ChannelId: partUpload.ChannelID,
+			ChannelId: partUpload.ChannelId,
 			PartNo:    partUpload.PartNo,
 			Size:      partUpload.Size,
 			Encrypted: partUpload.Encrypted,
